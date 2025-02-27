@@ -13,20 +13,53 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
 # Function to extract YouTube transcript
+import yt_dlp
+
 def extract_transcript(youtube_url):
-    ydl_opts = {"quiet": True, "extract_flat": True}
+    ydl_opts = {
+        "quiet": True,
+        "writesubtitles": True,
+        "subtitleslangs": ["en"],  # English subtitles
+        "skip_download": True,
+        "writeautomaticsub": True  # Fallback to auto-generated subtitles
+    }
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(youtube_url, download=False)
-        return info_dict.get("description", "Transcript not found.")
+        subtitles = info_dict.get("subtitles", {})
+        auto_subs = info_dict.get("automatic_captions", {})
+
+        # Get manually provided subtitles first, fallback to auto-generated
+        transcript_url = None
+        if "en" in subtitles:
+            transcript_url = subtitles["en"][0]["url"]
+        elif "en" in auto_subs:
+            transcript_url = auto_subs["en"][0]["url"]
+
+        return transcript_url or "Transcript not available."
 
 # Function to summarize text using OpenAI
+from openai import OpenAI
+import os
+
+# Load API key from environment variable
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Initialize OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Function to summarize text using OpenAI GPT-4
 def summarize_text(text):
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "system", "content": "Summarize this transcript:"},
-                  {"role": "user", "content": text}]
+    response = client.chat.completions.create(
+        model="gpt-4-turbo",  # ✅ Correct model name
+        messages=[
+            {"role": "system", "content": "Summarize this transcript:"},
+            {"role": "user", "content": text}
+        ]
     )
-    return response["choices"][0]["message"]["content"].strip()
+    return response.choices[0].message.content.strip()
+
+
 
 # Telegram Command: Start
 async def start(update: Update, context: CallbackContext):
@@ -37,11 +70,16 @@ async def handle_message(update: Update, context: CallbackContext):
     text = update.message.text
     if "youtube.com" in text or "youtu.be" in text:
         await update.message.reply_text("🔍 Extracting transcript...")
+
         transcript = extract_transcript(text)
-        
+        if transcript == "Transcript not available.":
+            await update.message.reply_text("❌ Could not retrieve transcript.")
+            return
+
         await update.message.reply_text("📝 Summarizing...")
-        summary = summarize_text(transcript)
         
+        summary = summarize_text(transcript)
+
         await update.message.reply_text(f"✅ Summary:\n\n{summary}")
     else:
         await update.message.reply_text("❌ Please send a valid YouTube link.")
